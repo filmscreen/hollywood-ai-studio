@@ -24,36 +24,51 @@ function checkDatabaseConnection(): boolean {
 export async function ensureTableExists(): Promise<boolean> {
   try {
     if (!checkDatabaseConnection()) {
+      console.warn("Database connection check failed - POSTGRES_URL not available");
       return false;
     }
 
-    await sql`
-      CREATE TABLE IF NOT EXISTS news_items (
-        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-        category VARCHAR(20) NOT NULL CHECK (category IN ('good', 'bad', 'controversial')),
-        headline TEXT NOT NULL,
-        summary TEXT NOT NULL,
-        studio_take TEXT NOT NULL,
-        is_approved BOOLEAN DEFAULT FALSE,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-      );
-    `;
+    // Try to create the table - this will fail silently if it already exists
+    try {
+      await sql`
+        CREATE TABLE IF NOT EXISTS news_items (
+          id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+          category VARCHAR(20) NOT NULL CHECK (category IN ('good', 'bad', 'controversial')),
+          headline TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          studio_take TEXT NOT NULL,
+          is_approved BOOLEAN DEFAULT FALSE,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+      `;
+    } catch (tableError) {
+      // If table creation fails, it might already exist - try to verify by querying
+      console.warn("Table creation attempt failed, checking if table exists:", tableError);
+      try {
+        await sql`SELECT 1 FROM news_items LIMIT 1;`;
+        // If query succeeds, table exists
+        console.log("Table exists, skipping creation");
+      } catch (verifyError) {
+        console.error("Table does not exist and could not be created:", verifyError);
+        return false;
+      }
+    }
     
-    // Create indexes if they don't exist
-    await sql`
-      CREATE INDEX IF NOT EXISTS idx_news_items_category ON news_items(category);
-    `;
-    await sql`
-      CREATE INDEX IF NOT EXISTS idx_news_items_approved ON news_items(is_approved);
-    `;
-    await sql`
-      CREATE INDEX IF NOT EXISTS idx_news_items_created_at ON news_items(created_at DESC);
-    `;
+    // Create indexes if they don't exist (these will fail silently if they exist)
+    try {
+      await sql`CREATE INDEX IF NOT EXISTS idx_news_items_category ON news_items(category);`;
+      await sql`CREATE INDEX IF NOT EXISTS idx_news_items_approved ON news_items(is_approved);`;
+      await sql`CREATE INDEX IF NOT EXISTS idx_news_items_created_at ON news_items(created_at DESC);`;
+    } catch (indexError) {
+      // Index creation errors are non-critical, log but continue
+      console.warn("Index creation warnings (non-critical):", indexError);
+    }
     
     console.log("Database schema ensured successfully");
     return true;
   } catch (error) {
-    console.error("Error ensuring database table exists:", error);
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    console.error("Error ensuring database table exists:", errorMessage);
     return false;
   }
 }
@@ -69,9 +84,12 @@ export async function getAllNewsItems(): Promise<NewsItem[]> {
     // Ensure table exists before querying
     const tableExists = await ensureTableExists();
     if (!tableExists) {
-      throw new Error("Database connection failed or table could not be created");
+      const errorMsg = "Database connection failed or table could not be created";
+      console.error(errorMsg);
+      throw new Error(errorMsg);
     }
 
+    // Execute query with error handling
     const result = await sql<NewsItem>`
       SELECT 
         id::text as id,
@@ -84,9 +102,12 @@ export async function getAllNewsItems(): Promise<NewsItem[]> {
       FROM news_items
       ORDER BY created_at DESC;
     `;
-    return result.rows;
+    
+    // Return empty array if no rows (not an error)
+    return result.rows || [];
   } catch (error) {
-    console.error("Error fetching news items:", error);
+    const errorMessage = error instanceof Error ? error.message : "Unknown database error";
+    console.error("Error fetching news items:", errorMessage);
     throw error;
   }
 }

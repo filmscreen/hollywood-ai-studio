@@ -34,12 +34,27 @@ function getMockNewsItems() {
   ];
 }
 
+// Helper function to add timeout to promises
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error("Database query timeout")), timeoutMs)
+    ),
+  ]);
+}
+
 export async function GET() {
+  // CRITICAL: Always return 200 with data - never return 500
+  // This ensures the dashboard never shows "Failed to Fetch" errors
+  
+  // Wrap everything in a try-catch to ensure we never throw
   try {
     // Check if POSTGRES_URL is available
-    const postgresUrl = process.env.POSTGRES_URL;
+    const postgresUrl = process.env.POSTGRES_URL || process.env.POSTGRES_PRISMA_URL;
+    
     if (!postgresUrl) {
-      console.warn("POSTGRES_URL not found, returning mock data");
+      console.warn("[api/news-items] POSTGRES_URL not found, returning mock data");
       return NextResponse.json(
         {
           success: true,
@@ -50,9 +65,9 @@ export async function GET() {
       );
     }
 
-    // Try to fetch from database
+    // Try to fetch from database with timeout (5 seconds for slow connections)
     try {
-      const newsItems = await getAllNewsItems();
+      const newsItems = await withTimeout(getAllNewsItems(), 5000);
 
       // Transform database format to dashboard format
       const transformed = newsItems.map((item) => ({
@@ -65,6 +80,7 @@ export async function GET() {
         timestamp: item.created_at,
       }));
 
+      console.log(`[api/news-items] Successfully fetched ${transformed.length} items from database`);
       return NextResponse.json(
         {
           success: true,
@@ -73,20 +89,25 @@ export async function GET() {
         { status: 200 }
       );
     } catch (dbError) {
-      // Database connection or query failed - return mock data as fallback
-      console.error("Database error, falling back to mock data:", dbError);
+      // Database connection, query, or timeout failed - return mock data as fallback
+      const errorMessage = dbError instanceof Error ? dbError.message : "Unknown database error";
+      console.error("[api/news-items] Database error (or timeout), falling back to mock data:", errorMessage);
+      
       return NextResponse.json(
         {
           success: true,
           data: getMockNewsItems(),
-          warning: "Database unavailable - using mock data",
+          warning: "Database unavailable or slow - using mock data",
         },
         { status: 200 }
       );
     }
   } catch (error) {
     // Last resort fallback - return mock data even if something else fails
-    console.error("Unexpected error in GET /api/news-items:", error);
+    // This should never happen, but ensures we never return 500
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    console.error("[api/news-items] Unexpected error, using mock data fallback:", errorMessage);
+    
     return NextResponse.json(
       {
         success: true,
