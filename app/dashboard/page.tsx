@@ -1,0 +1,250 @@
+"use client";
+
+import { useState, useEffect } from "react";
+
+interface NewsCard {
+  id: string;
+  category: "good" | "bad" | "controversial";
+  headline: string;
+  summary: string;
+  studioTake: string;
+  timestamp: string;
+}
+
+const CATEGORY_CONFIG = {
+  good: {
+    title: "The Good",
+    subtitle: "Innovation",
+    borderColor: "border-emerald-500/30",
+    accentColor: "text-emerald-400",
+  },
+  bad: {
+    title: "The Bad",
+    subtitle: "Industry Risks",
+    borderColor: "border-red-500/30",
+    accentColor: "text-red-400",
+  },
+  controversial: {
+    title: "The Controversial",
+    subtitle: "Ethics/Legal",
+    borderColor: "border-amber-500/30",
+    accentColor: "text-amber-400",
+  },
+};
+
+export default function Dashboard() {
+  const [cards, setCards] = useState<NewsCard[]>([]);
+  const [approvedCards, setApprovedCards] = useState<NewsCard[]>([]);
+
+  // Load initial data from localStorage or API
+  useEffect(() => {
+    const savedCards = localStorage.getItem("newsCards");
+    const savedApproved = localStorage.getItem("approvedCards");
+    
+    if (savedCards) {
+      try {
+        const parsed = JSON.parse(savedCards);
+        // Handle both API format (content/analysis) and dashboard format (summary/studioTake)
+        const normalized = parsed.map((card: any) => ({
+          ...card,
+          summary: card.summary || card.content || "",
+          studioTake: card.studioTake || card.analysis || "",
+        }));
+        setCards(normalized);
+      } catch (e) {
+        console.error("Error parsing saved cards:", e);
+      }
+    }
+    if (savedApproved) {
+      try {
+        const parsed = JSON.parse(savedApproved);
+        const normalized = parsed.map((card: any) => ({
+          ...card,
+          summary: card.summary || card.content || "",
+          studioTake: card.studioTake || card.analysis || "",
+        }));
+        setApprovedCards(normalized);
+      } catch (e) {
+        console.error("Error parsing approved cards:", e);
+      }
+    }
+  }, []);
+
+  // Save to localStorage whenever state changes
+  useEffect(() => {
+    localStorage.setItem("newsCards", JSON.stringify(cards));
+  }, [cards]);
+
+  useEffect(() => {
+    localStorage.setItem("approvedCards", JSON.stringify(approvedCards));
+  }, [approvedCards]);
+
+  const handleApprove = (card: NewsCard) => {
+    setApprovedCards((prev) => [...prev, card]);
+    setCards((prev) => prev.filter((c) => c.id !== card.id));
+  };
+
+  const handleRemoveApproved = (cardId: string) => {
+    setApprovedCards((prev) => prev.filter((c) => c.id !== cardId));
+  };
+
+  const getCardsByCategory = (category: "good" | "bad" | "controversial") => {
+    return cards.filter((card) => card.category === category);
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100">
+      {/* Header */}
+      <header className="border-b border-slate-800/50 bg-slate-950/80 backdrop-blur-sm sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-6 py-6">
+          <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-slate-100 to-slate-400 bg-clip-text text-transparent">
+            Hollywood AI Studio
+          </h1>
+          <p className="text-slate-400 text-sm mt-1">Newsletter Dashboard</p>
+        </div>
+      </header>
+
+      <main className="max-w-7xl mx-auto px-6 py-8">
+        {/* Three Column Layout */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-12">
+          {(["good", "bad", "controversial"] as const).map((category) => {
+            const config = CATEGORY_CONFIG[category];
+            const categoryCards = getCardsByCategory(category);
+
+            return (
+              <div
+                key={category}
+                className={`border ${config.borderColor} rounded-lg bg-slate-900/50 backdrop-blur-sm p-6`}
+              >
+                <div className="mb-6">
+                  <h2 className={`text-xl font-semibold ${config.accentColor}`}>
+                    {config.title}
+                  </h2>
+                  <p className="text-slate-400 text-sm mt-1">{config.subtitle}</p>
+                  <div className="mt-2 text-xs text-slate-500">
+                    {categoryCards.length} item{categoryCards.length !== 1 ? "s" : ""}
+                  </div>
+                </div>
+
+                <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
+                  {categoryCards.length === 0 ? (
+                    <div className="text-center py-8 text-slate-500 text-sm">
+                      No items yet
+                    </div>
+                  ) : (
+                    categoryCards.map((card) => (
+                      <NewsCardComponent
+                        key={card.id}
+                        card={card}
+                        onApprove={handleApprove}
+                        accentColor={config.accentColor}
+                      />
+                    ))
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Weekly Issue Preview */}
+        <div className="border border-slate-700/50 rounded-lg bg-slate-900/50 backdrop-blur-sm p-6">
+          <div className="mb-6">
+            <h2 className="text-2xl font-semibold text-slate-100">Weekly Issue Preview</h2>
+            <p className="text-slate-400 text-sm mt-1">
+              {approvedCards.length} approved item{approvedCards.length !== 1 ? "s" : ""}
+            </p>
+          </div>
+
+          {approvedCards.length === 0 ? (
+            <div className="text-center py-12 text-slate-500">
+              <p className="text-sm">No approved items yet. Approve cards to add them here.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {approvedCards.map((card) => {
+                const config = CATEGORY_CONFIG[card.category];
+                return (
+                  <div
+                    key={card.id}
+                    className={`border ${config.borderColor} rounded-lg bg-slate-950/80 p-4 relative group`}
+                  >
+                    <button
+                      onClick={() => handleRemoveApproved(card.id)}
+                      className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-slate-400 hover:text-red-400 text-xs"
+                    >
+                      Remove
+                    </button>
+                    <div className={`text-xs font-medium ${config.accentColor} mb-2`}>
+                      {config.title}
+                    </div>
+                    <h3 className="font-semibold text-slate-100 mb-2 text-sm">
+                      {card.headline}
+                    </h3>
+                    <p className="text-slate-400 text-xs mb-3 line-clamp-2">
+                      {card.summary}
+                    </p>
+                    <div className="border-t border-slate-800 pt-3">
+                      <p className="text-xs text-slate-500 font-medium mb-1">Studio Take:</p>
+                      <p className="text-xs text-slate-300">{card.studioTake}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </main>
+
+      <style jsx>{`
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: rgba(15, 23, 42, 0.5);
+          border-radius: 3px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: rgba(148, 163, 184, 0.3);
+          border-radius: 3px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background: rgba(148, 163, 184, 0.5);
+        }
+      `}</style>
+    </div>
+  );
+}
+
+interface NewsCardComponentProps {
+  card: NewsCard;
+  onApprove: (card: NewsCard) => void;
+  accentColor: string;
+}
+
+function NewsCardComponent({ card, onApprove, accentColor }: NewsCardComponentProps) {
+  return (
+    <div className="border border-slate-800/50 rounded-lg bg-slate-950/80 p-4 hover:border-slate-700/50 transition-colors">
+      <h3 className="font-semibold text-slate-100 mb-2 text-sm leading-tight">
+        {card.headline}
+      </h3>
+      
+      <div className="mb-3">
+        <p className="text-xs text-slate-500 font-medium mb-1">Summary:</p>
+        <p className="text-slate-300 text-xs leading-relaxed">{card.summary}</p>
+      </div>
+
+      <div className="mb-4">
+        <p className="text-xs text-slate-500 font-medium mb-1">Studio Take:</p>
+        <p className="text-slate-400 text-xs leading-relaxed">{card.studioTake}</p>
+      </div>
+
+      <button
+        onClick={() => onApprove(card)}
+        className="w-full py-2 px-4 bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-slate-600 rounded-md text-xs font-medium text-slate-100 transition-colors"
+      >
+        Approve
+      </button>
+    </div>
+  );
+}
