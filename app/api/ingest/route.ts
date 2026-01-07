@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { insertNewsItem } from "@/lib/db";
 
 export interface IngestData {
   category: "good" | "bad" | "controversial";
@@ -27,34 +28,36 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Here you would typically save to a database
-    // For now, we'll just return success
-    // In a real implementation, you'd store this data and the dashboard would fetch it
+    // Insert into database
+    // Map API fields: content -> summary, analysis -> studio_take
+    const newsItem = await insertNewsItem(
+      body.category,
+      body.headline,
+      body.content, // Maps to summary in database
+      body.analysis // Maps to studio_take in database
+    );
 
-    // Map API fields to dashboard format
-    // API uses: content, analysis
-    // Dashboard uses: summary, studioTake
-    const mappedData = {
-      id: Date.now().toString(),
-      category: body.category,
-      headline: body.headline,
-      summary: body.content, // Map content to summary
-      studioTake: body.analysis, // Map analysis to studioTake
-      timestamp: new Date().toISOString(),
-    };
-
+    // Return data in dashboard format
     return NextResponse.json(
       {
         success: true,
         message: "Data ingested successfully",
-        data: mappedData,
+        data: {
+          id: newsItem.id,
+          category: newsItem.category,
+          headline: newsItem.headline,
+          summary: newsItem.summary,
+          studioTake: newsItem.studio_take,
+          isApproved: newsItem.is_approved,
+          timestamp: newsItem.created_at,
+        },
       },
       { status: 200 }
     );
   } catch (error) {
     console.error("Error ingesting data:", error);
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: "Internal server error", details: error instanceof Error ? error.message : "Unknown error" },
       { status: 500 }
     );
   }

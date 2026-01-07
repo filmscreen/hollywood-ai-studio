@@ -9,6 +9,7 @@ interface NewsCard {
   summary: string;
   studioTake: string;
   timestamp: string;
+  isApproved?: boolean;
 }
 
 const CATEGORY_CONFIG = {
@@ -38,57 +39,96 @@ export default function Dashboard() {
   const [compiledMarkdown, setCompiledMarkdown] = useState<string>("");
   const [showMarkdown, setShowMarkdown] = useState<boolean>(false);
   const [copySuccess, setCopySuccess] = useState<boolean>(false);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // Load initial data from localStorage or API
+  // Fetch data from database
   useEffect(() => {
-    const savedCards = localStorage.getItem("newsCards");
-    const savedApproved = localStorage.getItem("approvedCards");
-    
-    if (savedCards) {
+    const fetchNewsItems = async () => {
       try {
-        const parsed = JSON.parse(savedCards);
-        // Handle both API format (content/analysis) and dashboard format (summary/studioTake)
-        const normalized = parsed.map((card: any) => ({
-          ...card,
-          summary: card.summary || card.content || "",
-          studioTake: card.studioTake || card.analysis || "",
-        }));
-        setCards(normalized);
-      } catch (e) {
-        console.error("Error parsing saved cards:", e);
+        setLoading(true);
+        setError(null);
+        const response = await fetch("/api/news-items");
+        
+        if (!response.ok) {
+          throw new Error("Failed to fetch news items");
+        }
+
+        const result = await response.json();
+        if (result.success && result.data) {
+          const allItems = result.data;
+          
+          // Separate approved and unapproved items
+          const unapproved = allItems.filter((item: NewsCard) => !item.isApproved);
+          const approved = allItems.filter((item: NewsCard) => item.isApproved);
+          
+          setCards(unapproved);
+          setApprovedCards(approved);
+        }
+      } catch (err) {
+        console.error("Error fetching news items:", err);
+        setError(err instanceof Error ? err.message : "Failed to load news items");
+      } finally {
+        setLoading(false);
       }
-    }
-    if (savedApproved) {
-      try {
-        const parsed = JSON.parse(savedApproved);
-        const normalized = parsed.map((card: any) => ({
-          ...card,
-          summary: card.summary || card.content || "",
-          studioTake: card.studioTake || card.analysis || "",
-        }));
-        setApprovedCards(normalized);
-      } catch (e) {
-        console.error("Error parsing approved cards:", e);
-      }
-    }
+    };
+
+    fetchNewsItems();
   }, []);
 
-  // Save to localStorage whenever state changes
-  useEffect(() => {
-    localStorage.setItem("newsCards", JSON.stringify(cards));
-  }, [cards]);
+  const handleApprove = async (card: NewsCard) => {
+    try {
+      const response = await fetch(`/api/news-items/${card.id}/approve`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ isApproved: true }),
+      });
 
-  useEffect(() => {
-    localStorage.setItem("approvedCards", JSON.stringify(approvedCards));
-  }, [approvedCards]);
+      if (!response.ok) {
+        throw new Error("Failed to approve item");
+      }
 
-  const handleApprove = (card: NewsCard) => {
-    setApprovedCards((prev) => [...prev, card]);
-    setCards((prev) => prev.filter((c) => c.id !== card.id));
+      const result = await response.json();
+      if (result.success && result.data) {
+        // Update local state
+        setApprovedCards((prev) => [...prev, result.data]);
+        setCards((prev) => prev.filter((c) => c.id !== card.id));
+      }
+    } catch (err) {
+      console.error("Error approving item:", err);
+      alert("Failed to approve item. Please try again.");
+    }
   };
 
-  const handleRemoveApproved = (cardId: string) => {
-    setApprovedCards((prev) => prev.filter((c) => c.id !== cardId));
+  const handleRemoveApproved = async (cardId: string) => {
+    try {
+      const response = await fetch(`/api/news-items/${cardId}/approve`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ isApproved: false }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to remove approval");
+      }
+
+      const result = await response.json();
+      if (result.success && result.data) {
+        // Update local state - move back to unapproved
+        const removedCard = approvedCards.find((c) => c.id === cardId);
+        if (removedCard) {
+          setCards((prev) => [...prev, result.data]);
+          setApprovedCards((prev) => prev.filter((c) => c.id !== cardId));
+        }
+      }
+    } catch (err) {
+      console.error("Error removing approval:", err);
+      alert("Failed to remove approval. Please try again.");
+    }
   };
 
   const getCardsByCategory = (category: "good" | "bad" | "controversial") => {
@@ -183,8 +223,20 @@ export default function Dashboard() {
       </header>
 
       <main className="max-w-7xl mx-auto px-6 py-8">
-        {/* Three Column Layout */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-12">
+        {error && (
+          <div className="mb-6 p-4 bg-red-950/50 border border-red-800/50 rounded-lg text-red-200 text-sm">
+            Error: {error}
+          </div>
+        )}
+
+        {loading ? (
+          <div className="text-center py-12 text-slate-400">
+            <p>Loading news items...</p>
+          </div>
+        ) : (
+          <>
+            {/* Three Column Layout */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-12">
           {(["good", "bad", "controversial"] as const).map((category) => {
             const config = CATEGORY_CONFIG[category];
             const categoryCards = getCardsByCategory(category);
@@ -273,76 +325,78 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Weekly Issue Generator */}
-        <div className="mt-12 border border-slate-700/50 rounded-lg bg-slate-900/50 backdrop-blur-sm p-6">
-          <div className="mb-6">
-            <h2 className="text-2xl font-semibold text-slate-100">Weekly Issue Generator</h2>
-            <p className="text-slate-400 text-sm mt-1">
-              Compile all approved items into a newsletter-ready Markdown format
-            </p>
-          </div>
-
-          <button
-            onClick={compileFinalDraft}
-            disabled={approvedCards.length === 0}
-            className="w-full py-3 px-6 bg-gradient-to-r from-slate-800 to-slate-700 hover:from-slate-700 hover:to-slate-600 border border-slate-600 hover:border-slate-500 rounded-md text-sm font-semibold text-slate-100 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:from-slate-800 disabled:hover:to-slate-700"
-          >
-            Compile Final Draft
-          </button>
-
-          {showMarkdown && compiledMarkdown && (
-            <div className="mt-6">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-slate-100">Compiled Markdown</h3>
-                <button
-                  onClick={copyToClipboard}
-                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-slate-600 rounded-md text-sm font-medium text-slate-100 transition-colors flex items-center gap-2"
-                >
-                  {copySuccess ? (
-                    <>
-                      <svg
-                        className="w-4 h-4"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M5 13l4 4L19 7"
-                        />
-                      </svg>
-                      Copied!
-                    </>
-                  ) : (
-                    <>
-                      <svg
-                        className="w-4 h-4"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-                        />
-                      </svg>
-                      Copy to Clipboard
-                    </>
-                  )}
-                </button>
+            {/* Weekly Issue Generator */}
+            <div className="mt-12 border border-slate-700/50 rounded-lg bg-slate-900/50 backdrop-blur-sm p-6">
+              <div className="mb-6">
+                <h2 className="text-2xl font-semibold text-slate-100">Weekly Issue Generator</h2>
+                <p className="text-slate-400 text-sm mt-1">
+                  Compile all approved items into a newsletter-ready Markdown format
+                </p>
               </div>
-              <div className="border border-slate-800/50 rounded-lg bg-slate-950/80 p-4">
-                <pre className="text-xs text-slate-300 whitespace-pre-wrap font-mono overflow-x-auto max-h-[600px] overflow-y-auto custom-scrollbar">
-                  {compiledMarkdown}
-                </pre>
-              </div>
+
+              <button
+                onClick={compileFinalDraft}
+                disabled={approvedCards.length === 0}
+                className="w-full py-3 px-6 bg-gradient-to-r from-slate-800 to-slate-700 hover:from-slate-700 hover:to-slate-600 border border-slate-600 hover:border-slate-500 rounded-md text-sm font-semibold text-slate-100 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:from-slate-800 disabled:hover:to-slate-700"
+              >
+                Compile Final Draft
+              </button>
+
+              {showMarkdown && compiledMarkdown && (
+                <div className="mt-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-semibold text-slate-100">Compiled Markdown</h3>
+                    <button
+                      onClick={copyToClipboard}
+                      className="px-4 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-slate-600 rounded-md text-sm font-medium text-slate-100 transition-colors flex items-center gap-2"
+                    >
+                      {copySuccess ? (
+                        <>
+                          <svg
+                            className="w-4 h-4"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M5 13l4 4L19 7"
+                            />
+                          </svg>
+                          Copied!
+                        </>
+                      ) : (
+                        <>
+                          <svg
+                            className="w-4 h-4"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                            />
+                          </svg>
+                          Copy to Clipboard
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  <div className="border border-slate-800/50 rounded-lg bg-slate-950/80 p-4">
+                    <pre className="text-xs text-slate-300 whitespace-pre-wrap font-mono overflow-x-auto max-h-[600px] overflow-y-auto custom-scrollbar">
+                      {compiledMarkdown}
+                    </pre>
+                  </div>
+                </div>
+              )}
             </div>
-          )}
-        </div>
+          </>
+        )}
       </main>
 
       <style jsx>{`
