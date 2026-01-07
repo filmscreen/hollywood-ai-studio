@@ -10,9 +10,23 @@ export interface NewsItem {
   created_at: string;
 }
 
-// Initialize the database schema
-export async function initializeDatabase() {
+// Check if POSTGRES_URL is available
+function checkDatabaseConnection(): boolean {
+  const postgresUrl = process.env.POSTGRES_URL;
+  if (!postgresUrl) {
+    console.warn("POSTGRES_URL environment variable is not set");
+    return false;
+  }
+  return true;
+}
+
+// Initialize the database schema - creates table if it doesn't exist
+export async function ensureTableExists(): Promise<boolean> {
   try {
+    if (!checkDatabaseConnection()) {
+      return false;
+    }
+
     await sql`
       CREATE TABLE IF NOT EXISTS news_items (
         id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -24,16 +38,40 @@ export async function initializeDatabase() {
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
       );
     `;
-    console.log("Database schema initialized successfully");
+    
+    // Create indexes if they don't exist
+    await sql`
+      CREATE INDEX IF NOT EXISTS idx_news_items_category ON news_items(category);
+    `;
+    await sql`
+      CREATE INDEX IF NOT EXISTS idx_news_items_approved ON news_items(is_approved);
+    `;
+    await sql`
+      CREATE INDEX IF NOT EXISTS idx_news_items_created_at ON news_items(created_at DESC);
+    `;
+    
+    console.log("Database schema ensured successfully");
+    return true;
   } catch (error) {
-    console.error("Error initializing database:", error);
-    throw error;
+    console.error("Error ensuring database table exists:", error);
+    return false;
   }
 }
 
-// Get all news items
+// Initialize the database schema (legacy function for backwards compatibility)
+export async function initializeDatabase() {
+  return await ensureTableExists();
+}
+
+// Get all news items with automatic table creation
 export async function getAllNewsItems(): Promise<NewsItem[]> {
   try {
+    // Ensure table exists before querying
+    const tableExists = await ensureTableExists();
+    if (!tableExists) {
+      throw new Error("Database connection failed or table could not be created");
+    }
+
     const result = await sql<NewsItem>`
       SELECT 
         id::text as id,
@@ -76,7 +114,7 @@ export async function getNewsItemsByApproval(approved: boolean): Promise<NewsIte
   }
 }
 
-// Insert a new news item
+// Insert a new news item with automatic table creation
 export async function insertNewsItem(
   category: "good" | "bad" | "controversial",
   headline: string,
@@ -84,6 +122,12 @@ export async function insertNewsItem(
   studioTake: string
 ): Promise<NewsItem> {
   try {
+    // Ensure table exists before inserting
+    const tableExists = await ensureTableExists();
+    if (!tableExists) {
+      throw new Error("Database connection failed or table could not be created");
+    }
+
     const result = await sql<NewsItem>`
       INSERT INTO news_items (category, headline, summary, studio_take, is_approved)
       VALUES (${category}, ${headline}, ${summary}, ${studioTake}, FALSE)
@@ -103,9 +147,15 @@ export async function insertNewsItem(
   }
 }
 
-// Update approval status
+// Update approval status with automatic table creation
 export async function updateApprovalStatus(id: string, isApproved: boolean): Promise<NewsItem> {
   try {
+    // Ensure table exists before updating
+    const tableExists = await ensureTableExists();
+    if (!tableExists) {
+      throw new Error("Database connection failed or table could not be created");
+    }
+
     const result = await sql<NewsItem>`
       UPDATE news_items
       SET is_approved = ${isApproved}
